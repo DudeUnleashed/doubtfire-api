@@ -14,7 +14,6 @@ class RequirementSetTest < ActiveSupport::TestCase
     requirement_set2 = FactoryBot.create(:requirement_set)
     add_auth_header_for(user: User.first)
     get "/api/requirementset"
-    puts JSON.parse(last_response.body)
     assert_equal 200, last_response.status
     assert_equal 2, JSON.parse(last_response.body).size
   ensure
@@ -27,7 +26,6 @@ class RequirementSetTest < ActiveSupport::TestCase
     requirement_set = FactoryBot.create(:requirement_set, requirementSetGroupId: test_id)
     add_auth_header_for(user: User.first)
     get "/api/requirementset/requirementSetGroupId/#{test_id}"
-    puts JSON.parse(last_response.body)
     assert_equal 200, last_response.status
   ensure
     requirement_set.destroy
@@ -37,7 +35,6 @@ class RequirementSetTest < ActiveSupport::TestCase
     data_to_post = { requirementSetGroupId: 101, description: 'Test', unitId: 101, requirementId: 101 }
     add_auth_header_for(user: User.first)
     post_json "/api/requirementset", data_to_post
-    puts JSON.parse(last_response.body)
     assert_equal 201, last_response.status
   end
 
@@ -46,7 +43,6 @@ class RequirementSetTest < ActiveSupport::TestCase
     data_to_put = { requirementSetGroupId: 102, description: 'Test2', unitId: 102, requirementId: 102 }
     add_auth_header_for(user: User.first)
     put_json "/api/requirementset/requirementSetId/#{requirement_set.id}", data_to_put
-    puts JSON.parse(last_response.body)
     assert_equal 200, last_response.status
   ensure
     requirement_set.destroy
@@ -56,7 +52,6 @@ class RequirementSetTest < ActiveSupport::TestCase
     requirement_set = FactoryBot.create(:requirement_set, requirementSetGroupId: 101, description: 'Test', unitId: 101, requirementId: 101)
     add_auth_header_for(user: User.first)
     delete "/api/requirementset/requirementSetId/#{requirement_set.id}"
-    puts JSON.parse(last_response.body)
     assert_equal 0, Courseflow::RequirementSet.where(id: requirement_set.id).count
   ensure
     requirement_set.destroy
@@ -65,7 +60,6 @@ class RequirementSetTest < ActiveSupport::TestCase
   def test_delete_requirement_set_unauthorised
     requirement_set = FactoryBot.create(:requirement_set, requirementSetGroupId: 101, description: 'Test', unitId: 101, requirementId: 101)
     delete "/api/requirementset/requirementSetId/#{requirement_set.id}"
-    puts JSON.parse(last_response.body)
     assert_equal 419, last_response.status
   ensure
     requirement_set.destroy
@@ -74,7 +68,6 @@ class RequirementSetTest < ActiveSupport::TestCase
   def test_delete_requrement_set_invalid_id
     add_auth_header_for(user: User.first)
     delete "/api/requirementset/requirementSetId/999"
-    puts JSON.parse(last_response.body)
     assert_equal 404, last_response.status
   end
 

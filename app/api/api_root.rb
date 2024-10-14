@@ -131,6 +131,10 @@ class ApiRoot < Grape::API
   AuthenticationHelpers.add_auth_to WebcalApi
 
   AuthenticationHelpers.add_auth_to Courseflow::CourseApi
+  AuthenticationHelpers.add_auth_to Courseflow::CourseMapApi
+  AuthenticationHelpers.add_auth_to Courseflow::CourseMapUnitApi
+  AuthenticationHelpers.add_auth_to Courseflow::SpecializationApi
+  AuthenticationHelpers.add_auth_to Courseflow::RequirementSetApi
   AuthenticationHelpers.add_auth_to UnitDefinitionApi
 
   add_swagger_documentation \

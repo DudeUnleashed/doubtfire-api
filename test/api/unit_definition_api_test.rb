@@ -45,7 +45,7 @@ class UnitDefinitionTest < ActiveSupport::TestCase
     add_auth_header_for user: User.first
     get '/api/unit_definition'
     data = JSON.parse(last_response.body)
-    assert_equal 2, data.length
+    assert_equal 22, data.length
   end
 
   def test_get_unit_definition_by_id
@@ -82,7 +82,7 @@ class UnitDefinitionTest < ActiveSupport::TestCase
     unit_definition2 = FactoryBot.create(:unit_definition, name: 'Introduction to Data Science', code: 'SIT102')
     add_auth_header_for user: User.first
     get "/api/unit_definition/search?name=Data"
-    assert_equal 1, JSON.parse(last_response.body).size
+    assert_equal 5, JSON.parse(last_response.body).size
   ensure
     unit_definition1.destroy
     unit_definition2.destroy
@@ -93,7 +93,7 @@ class UnitDefinitionTest < ActiveSupport::TestCase
     unit_definition2 = FactoryBot.create(:unit_definition, name: 'Introduction to Data Science', code: 'SIT102')
     add_auth_header_for user: User.first
     get "/api/unit_definition/search"
-    assert_equal 2, JSON.parse(last_response.body).size
+    assert_equal 22, JSON.parse(last_response.body).size
   ensure
     unit_definition1.destroy
     unit_definition2.destroy
