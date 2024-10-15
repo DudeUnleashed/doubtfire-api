@@ -227,12 +227,24 @@ class Task < ApplicationRecord
     Task.joins(:project).where('projects.user_id = ?', user.id)
   end
 
-  def processing_pdf?
+  def folder_exists_in_new?
     if group_task? && group_submission
       File.exist? File.join(FileHelper.student_work_dir(:new), group_submission.submitter_task.id.to_s)
     else
       File.exist? File.join(FileHelper.student_work_dir(:new), id.to_s)
     end
+  end
+
+  def folder_exists_in_process?
+    if group_task? && group_submission
+      File.exist? File.join(FileHelper.student_work_dir(:in_process), group_submission.submitter_task.id.to_s)
+    else
+      File.exist? File.join(FileHelper.student_work_dir(:in_process), id.to_s)
+    end
+  end
+
+  def processing_pdf?
+    folder_exists_in_new? || folder_exists_in_process?
   end
 
   # Get the raw extension date - with extensions representing weeks
@@ -350,7 +362,7 @@ class Task < ApplicationRecord
   end
 
   def submitted_status?
-    ![:working_on_it, :not_started, :fix_and_resubmit, :redo, :need_help].include? status
+    [:working_on_it, :not_started, :fix_and_resubmit, :redo, :need_help].exclude? status
   end
 
   def fix_and_resubmit?
@@ -592,7 +604,7 @@ class Task < ApplicationRecord
   end
 
   def submitted_before_due?
-    return true unless due_date.present?
+    return true if due_date.blank?
 
     to_same_day_anywhere_on_earth(due_date) >= self.submission_date
   end
@@ -670,7 +682,7 @@ class Task < ApplicationRecord
 
   def individual_task_or_submitter_of_group_task?
     return true if !group_task? # its individual
-    return true unless group.present? # no group yet... so individual
+    return true if group.blank? # no group yet... so individual
 
     ensured_group_submission.submitted_by? self.project # return true if submitted by this project
   end
@@ -832,12 +844,10 @@ class Task < ApplicationRecord
       zip_file = zip_file_path || zip_file_path_for_done_task
       return false if zip_file.nil? || (!Dir.exist? task_dir)
 
-      FileUtils.rm_f(zip_file)
-
-      # compress image files
+      # compress image files - convert to jpg
       image_files = Dir.entries(task_dir).select { |f| (f =~ /^\d{3}.(image)/) == 0 }
       image_files.each do |img|
-        # Ensure all images in submissions are not jpg
+        # Ensure all images in submissions are jpg
         dest_file = "#{task_dir}#{File.basename(img, ".*")}.jpg"
         raise 'Failed to compress an image. Ensure all images are valid.' unless FileHelper.compress_image_to_dest("#{task_dir}#{img}", dest_file, true)
 
@@ -845,9 +855,20 @@ class Task < ApplicationRecord
         FileUtils.rm("#{task_dir}#{img}") unless dest_file == "#{task_dir}#{img}"
       end
 
-      # copy all files into zip
       input_files = Dir.entries(task_dir).select { |f| (f =~ /^\d{3}.(cover|document|code|image)/) == 0 }
 
+      if input_files.length != task_definition.number_of_uploaded_files
+        logger.error "Error processing task #{log_details} - missing files expected #{task_definition.number_of_uploaded_files} got #{input_files.length}"
+        logger.error "Files found: #{input_files}"
+        return false
+      end
+
+      logger.info "Creating new zip file for task #{id} in #{zip_file}"
+
+      # We have what looks like a good submission, remove old zip
+      FileUtils.rm_f(zip_file)
+
+      # copy all files into zip
       zip_dir = File.dirname(zip_file)
       FileUtils.mkdir_p zip_dir
 
@@ -878,9 +899,12 @@ class Task < ApplicationRecord
   def clear_in_process
     in_process_dir = student_work_dir(:in_process, false)
     if Dir.exist? in_process_dir
-      Dir.chdir(FileUtils.student_work_dir) if FileUtils.pwd == in_process_dir
+      Dir.chdir(FileHelper.student_work_root) if FileUtils.pwd == in_process_dir
       FileUtils.rm_rf in_process_dir
     end
+
+  rescue StandardError => e
+    logger.error "Error clearing in process directory for task #{log_details} - #{e.message}"
   end
 
   #
@@ -923,7 +947,10 @@ class Task < ApplicationRecord
     from_dir = File.join(source_folder, id.to_s) + "/"
     if Dir.exist?(from_dir)
       # save new files in done folder
-      return false unless compress_new_to_done(task_dir: from_dir)
+      unless compress_new_to_done(task_dir: from_dir)
+        logger.error "Error processing task #{log_details} - failed to compress new files"
+        return false
+      end
     end
 
     # Get the zip file path...
@@ -1008,7 +1035,7 @@ class Task < ApplicationRecord
       @task = task
       @files = task.in_process_files_for_task(is_retry)
       @base_path = task.student_work_dir(:in_process, false)
-      @image_path = Rails.root.join('public', 'assets', 'images')
+      @image_path = Rails.root.join('public/assets/images')
       @institution_name = Doubtfire::Application.config.institution[:name]
       @doubtfire_product_name = Doubtfire::Application.config.institution[:product_name]
       @include_pax = !is_retry
@@ -1035,7 +1062,7 @@ class Task < ApplicationRecord
     elsif ['cpp', 'hpp', 'c++', 'h++', 'cc', 'cxx', 'cp'].include?(extn) then 'cpp'
     elsif ['java'].include?(extn) then 'java'
     elsif %w(js json ts).include?(extn) then 'js'
-    elsif ['html', 'rhtml'].include?(extn) then 'html'
+    elsif ['html', 'rhtml', 'vue'].include?(extn) then 'html'
     elsif %w(css scss).include?(extn) then 'css'
     elsif ['rb'].include?(extn) then 'ruby'
     elsif ['coffee'].include?(extn) then 'coffeescript'
@@ -1077,9 +1104,24 @@ class Task < ApplicationRecord
     end
   end
 
+  # A custom error to capture the log message from the latex error
+  class LatexError < StandardError
+    attr_reader :log_message
+
+    def initialize(log_message)
+      super
+      @log_message = log_message
+    end
+  end
+
   # Convert a submission to pdf - the source folder is the root folder in which the submission folder will be found (not the submission folder itself)
-  def convert_submission_to_pdf(source_folder = FileHelper.student_work_dir(:new))
-    return false unless move_files_to_in_process(source_folder)
+  def convert_submission_to_pdf(source_folder: FileHelper.student_work_dir(:new), log_to_stdout: true)
+    logger.info "Converting task #{self.id} to pdf"
+
+    unless move_files_to_in_process(source_folder)
+      logger.error("Failed to move files for #{log_details} to in process")
+      return false
+    end
 
     begin
       tac = TaskAppController.new
@@ -1099,18 +1141,24 @@ class Task < ApplicationRecord
           logger.error "Failed to create PDF for task #{log_details}. Error: #{e.message}"
 
           log_file = e.message.scan(/\/.*\.log/).first
-          # puts "log file is ... #{log_file}"
           if log_file && File.exist?(log_file)
-            # puts "exists"
-            begin
-              puts "--- Latex Log ---\n"
-              puts File.read(log_file)
-              puts "---    End    ---\n\n"
-            rescue
+            log_message = File.read(log_file)
+
+            # puts "log file is ... #{log_file}"
+            if log_to_stdout
+              # puts "exists"
+              begin
+                # rubocop:disable Rails/Output
+                puts "--- Latex Log ---\n"
+                puts log_message
+                puts "---    End    ---\n\n"
+                # rubocop:enable Rails/Output
+              rescue
+              end
             end
           end
 
-          raise 'Failed to convert your submission to PDF. Check code files submitted for invalid characters, that documents are valid pdfs, and that images are valid.'
+          raise LatexError.new(log_message), 'Failed to convert your submission to PDF. Check code files submitted for invalid characters, that documents are valid pdfs, and that images are valid.'
         end
       end
 
@@ -1132,6 +1180,8 @@ class Task < ApplicationRecord
 
       FileHelper.compress_pdf(portfolio_evidence_path)
 
+      logger.info("PDF created for task #{self.id}")
+
       # if the task is the draft learning summary task
       if task_definition_id == unit.draft_task_definition_id
         # if there is a learning summary, execute, if there isn't and a learning summary exists, don't execute
@@ -1141,14 +1191,13 @@ class Task < ApplicationRecord
       end
 
       save
-
-      clear_in_process
       return true
     rescue => e
-      clear_in_process
-
       trigger_transition trigger: 'fix', by_user: project.tutor_for(task_definition)
+      add_text_comment project.tutor_for(task_definition), "**Automated Comment**: Something went wrong with your submission. Check the files and resubmit this task. #{e.message}"
       raise e
+    ensure
+      clear_in_process
     end
   end
 
@@ -1207,7 +1256,17 @@ class Task < ApplicationRecord
   #
   # Checks to make sure that the files match what we expect
   #
-  def accept_submission(current_user, files, _student, ui, contributions, trigger, alignments, accepted_tii_eula: false)
+  def accept_submission(current_user, files, ui, contributions, trigger, alignments, accepted_tii_eula: false)
+    # Ensure there is not a submission already in process
+    if processing_pdf?
+      ui.error!({ 'error' => 'A submission is already being processed. Please wait for the current submission process to complete.' }, 403)
+    end
+
+    # Ensure all of the files are present
+    if files.nil? || files.length != task_definition.number_of_uploaded_files
+      ui.error!({ 'error' => 'Some files are missing from the submission upload' }, 403)
+    end
+
     #
     # Ensure that each file in files has the following attributes:
     # id, name, filename, type, tempfile
@@ -1360,6 +1419,17 @@ class Task < ApplicationRecord
     end
     # we got to the end so no match
     nil
+  end
+
+  def archive_submission
+    FileUtils.rm_f(portfolio_evidence_path) if has_pdf
+  end
+
+  def overseer_enabled?
+    return  unit.assessment_enabled &&
+            task_definition.assessment_enabled &&
+            task_definition.has_task_assessment_resources? &&
+            (has_new_files? || has_done_file?)
   end
 
   private

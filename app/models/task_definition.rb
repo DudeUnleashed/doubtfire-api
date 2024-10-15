@@ -19,7 +19,7 @@ class TaskDefinition < ApplicationRecord
   has_many :learning_outcome_task_links, dependent: :destroy # links to learning outcomes
   has_many :learning_outcomes, -> { where('learning_outcome_task_links.task_id is NULL') }, through: :learning_outcome_task_links # only link staff relations
 
-  has_many :tii_group_attachments, dependent: :destroy
+  has_many :tii_group_attachments, dependent: :destroy # destroy uploaded files to tii - after the tasks
   has_many :tii_actions, as: :entity, dependent: :destroy
 
   serialize :upload_requirements, coder: JSON
@@ -176,6 +176,26 @@ class TaskDefinition < ApplicationRecord
         errors.add(:upload_requirements, "has additional values for item #{i + 1} --> #{req.keys.join(' ')}.")
       end
 
+      # Check the name matches a valid filename format
+      unless req['name'].match?(/^[a-zA-Z0-9_\- \.]+$/)
+        errors.add(:upload_requirements, "the name for item #{i + 1} does not seem to be a valid filename --> #{req['name']}.")
+      end
+
+      # Check the type is either document or image or code
+      unless %w(document image code).include? req['type']
+        errors.add(:upload_requirements, "the type for item #{i + 1} is not valid --> #{req['type']}.")
+      end
+
+      # Check that tii check is a boolean
+      unless req['tii_check'].blank? || [true, false].include?(req['tii_check'])
+        errors.add(:upload_requirements, "the tii_check for item #{i + 1} is not a boolean --> #{req['tii_check']}.")
+      end
+
+      # Check that tii_pct is a non-negative number
+      unless req['tii_pct'].blank? || (req['tii_pct'].is_a?(Numeric) && req['tii_pct'] >= 0)
+        errors.add(:upload_requirements, "the tii_pct for item #{i + 1} is not a non-negative number --> #{req['tii_pct']}.")
+      end
+
       i += 1
     end
   end
@@ -278,7 +298,7 @@ class TaskDefinition < ApplicationRecord
                   .map { |column| attributes[column.to_s] } +
       [
         group_set.nil? ? "" : group_set.name,
-        upload_requirements.to_s,
+        upload_requirements.to_json,
         start_week,
         start_day,
         target_week,
@@ -301,7 +321,7 @@ class TaskDefinition < ApplicationRecord
     new_task = false
     abbreviation = row[:abbreviation].strip
     name = row[:name].strip
-    tutorial_stream = unit.tutorial_streams.find_by_abbr_or_name("#{row[:tutorial_stream]}".strip)
+    tutorial_stream = unit.tutorial_streams.find_by('abbreviation = :name OR name = :name', name: "#{row[:tutorial_stream]}".strip)
     target_date = unit.date_for_week_and_day row[:target_week].to_i, "#{row[:target_day]}".strip
     return [nil, false, "Unable to determine target date for #{abbreviation} -- need week number, and day short text eg. 'Wed'"] if target_date.nil?
 
@@ -460,7 +480,7 @@ class TaskDefinition < ApplicationRecord
         if t.group.nil?
           result = false
         else
-          result = !seen_groups.include?(t.group)
+          result = seen_groups.exclude?(t.group)
           seen_groups << t.group if result
         end
         result

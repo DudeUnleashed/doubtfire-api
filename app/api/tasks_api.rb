@@ -219,12 +219,11 @@ class TasksApi < Grape::API
     file_loc = FileHelper.zip_file_path_for_done_task(task)
 
     if file_loc.nil? || !File.exist?(file_loc)
-      file_loc = Rails.root.join('public', 'resources', 'FileNotFound.pdf')
+      file_loc = Rails.root.join('public/resources/FileNotFound.pdf')
       header['Content-Disposition'] = 'attachment; filename=FileNotFound.pdf'
     else
       header['Content-Disposition'] = "attachment; filename=#{project.student.username}-#{task.task_definition.abbreviation}.zip"
     end
-    header['Access-Control-Expose-Headers'] = 'Content-Disposition'
 
     # Set download headers...
     content_type 'application/octet-stream'

@@ -132,10 +132,10 @@ class User < ApplicationRecord
 
   # Model associations
   belongs_to  :role, optional: false # Foreign Key
-  has_many    :unit_roles, dependent: :destroy
-  has_many    :projects, dependent: :destroy
-  has_many    :auth_tokens, dependent: :destroy
-  has_one     :webcal, dependent: :destroy
+  has_many    :unit_roles, dependent: :destroy, inverse_of: :user
+  has_many    :projects, dependent: :restrict_with_exception, inverse_of: :user
+  has_many    :auth_tokens, dependent: :destroy, inverse_of: :user
+  has_one     :webcal, dependent: :destroy, inverse_of: :user
 
   # Model validations/constraints
   validates :first_name,  presence: true
@@ -322,6 +322,7 @@ class User < ApplicationRecord
 
     # What can convenors do with users?
     convenor_role_permissions = [
+      :get_all_units,
       :promote_user,
       :list_users,
       :create_user,
@@ -463,7 +464,7 @@ class User < ApplicationRecord
 
         pass_checks = true
         %w(username email role first_name).each do |col|
-          next unless row[col].nil? || row[col].empty?
+          next if row[col].present?
 
           errors << { row: row, message: "The #{col} cannot be blank or empty" }
           pass_checks = false
